@@ -1,0 +1,8 @@
+{
+	"version":"1.0.0",
+	"title":"BNO055",
+	"copyright":"Zerynth Team",
+	"files":[
+		["BNO055","bno055.py"]
+	]
+}

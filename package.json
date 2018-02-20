@@ -1,0 +1,22 @@
+{
+    "dependencies": {},
+    "description": "Driver for BOSCH BNO055 I2C 9-axis Absolute Orientation Sensor",
+    "fullname": "lib.bosch.bno055",
+    "git_pointer": "zerynth://zerynth-libs/bosch-bno055",
+    "info": {
+        "chip_manufacturer": "BOSCH",
+        "chip_name": "BNO055",
+        "name": "9-axis Absolute Orientation Sensor",
+        "type": "Sensor"
+    },
+    "keywords": [
+        "bosch",
+        "9-axis",
+        "gyroscope",
+        "orientation"
+    ],
+    "repo": "official",
+    "title": "BNO055 9-axis Absolute Orientation Sensor",
+    "version": "r2.0.11",
+    "whatsnew": ""
+}

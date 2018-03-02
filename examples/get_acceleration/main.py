@@ -23,12 +23,6 @@ print("Ready!")
 print("--------------------------------------------------------")
 
 while True:
-    data = bno.get_acc("x") # Read Data on x axis
-    print("Acceleration on X axis", data)
-    data = bno.get_acc("y") # Read Data on y axis
-    print("Acceleration on Y axis", data)
-    data = bno.get_acc("Z") # Read Data on z axis
-    print("Acceleration on Z axis", data)
     data = bno.get_acc() # Read Data on 3 axis
     print("Acceleration on XYZ", data)
     print("--------------------------------------------------------")

@@ -11,18 +11,6 @@ This module contains the driver for BOSCH BNO055 9-axis Absolute Orientation Sen
 
 import i2c
 
-# reg list p.51
-# blue = r/w, yellow = ro, green = wo, grey = reserved
-
-# PWR_MODE_REG  = 0x3E
-# OPR_MODE_REG  = 0x3D
-# UNIT_SEL_REG  = 0x3B
-# ACC_CONF_REG  = 0x08
-# # 'axis': (LSB, MSB)
-# ACC_DATA_REGS = { 'z': (0xC,0xD), 'y': (0xA,0xB), 'x': (0x8,0x9) }
-# GYR_DATA_REGS = { 'z': (0x18,0x19), 'y': (0x16,0x17), 'x': (0x14,0x15) }
-
-
 # I2C addresses
 BNO055_ADDRESS_A                     = 0x28
 BNO055_ADDRESS_B                     = 0x29
@@ -224,11 +212,12 @@ _modes = {
 class BNO055(i2c.I2C):
     """
 
-.. class:: BNO055(i2cdrv, addr=0x28, clk=100000)
+.. class:: BNO055(i2cdrv, addr=0x28, rst=None, clk=100000)
 
     Creates an intance of a new BNO055.
 
     :param i2cdrv: I2C Bus used '( I2C0, ... )'
+    :param rst: Reset pin (optional)
     :param addr: Slave address, default 0x28
     :param clk: Clock speed, default 100kHz
 
@@ -245,38 +234,13 @@ class BNO055(i2c.I2C):
 
     """
 
-    def __init__(self, i2cdrv, addr=0x28, clk=100000):
+    def __init__(self, i2cdrv, rst=None, addr=0x28, clk=100000):
         i2c.I2C.__init__(self,i2cdrv,addr,clk)
         self._addr = addr
-
-    # def _first_conf(self, mode):
-    #
-    #     try:
-    #         self.write_bytes(PAGE_ID_ADDR, 0)
-    #     except Exception:
-    #         pass
-    #
-    #     try:
-    #         self.set_mode(OPERATION_MODE_CONFIG)
-    #     except Exception:
-    #         pass
-    #
-    #     self.write_bytes(PAGE_ID_ADDR, 0)
-    #
-    #     if self.write_read(CHIP_ID_ADDR,1)[0] == BNO055_ID:
-    #         print("Read chip ID: OK")
-    #
-    #     # trigger reset
-    #     self.write_bytes(SYS_TRIGGER_ADDR, 0x20)
-    #     sleep(650)
-    #
-    #     self.write_bytes(PWR_MODE_REG, NORMAL)
-    #     sleep(10)
-    #
-    #     self.write_bytes(SYS_TRIGGER_ADDR, 0)
-    #     sleep(10)
-    #
-    #     self.set_mode(mode)
+        self._rst = None
+        if rst:
+            self._rst = rst
+            pinMode(self._rst, OUTPUT_PUSHPULL)
 
     def init(self, mode = None):
         """
@@ -288,14 +252,27 @@ class BNO055(i2c.I2C):
         :param mode: Mode value selectable from Mode table (refer to page 20 of the BNO055 datasheet), default None
 
         """
+
+        self.write_bytes(BNO055_OPR_MODE_ADDR, OPERATION_MODE_CONFIG)
+        sleep(25)
+        # trigger reset HW/SW
+        if self._rst:
+            digitalWrite(self._rst, LOW)
+            sleep(10)
+            digitalWrite(self._rst, HIGH)
+        else:
+            self.write_bytes(BNO055_SYS_TRIGGER_ADDR, 0x20)
+        
+        sleep(650)    
         self.write_bytes(BNO055_PWR_MODE_ADDR, POWER_MODE_NORMAL)
         sleep(10)
+        self.write_byte(BNO055_SYS_TRIGGER_ADDR, 0)
 
         self.write_bytes(BNO055_UNIT_SEL_ADDR, 0)
         if mode == None:
-            self.set_mode(OPERATION_MODE_NDOF)
+            self.set_mode("ndof")
         else:
-            self.set_mode(_modes[mode])
+            self.set_mode(mode)
 
     def set_mode(self, mode):
         """
@@ -328,16 +305,13 @@ ndof       NDOF         Yes       Yes        Yes        Yes
 ========== ============ ========= ========== ========== ===========
                      
         """
+        if mode not in _modes:
+            raise ValueError
+        self.mode = mode
         self.write_bytes(BNO055_OPR_MODE_ADDR, OPERATION_MODE_CONFIG)
         sleep(25) # p.21 switching time
-        self.write_bytes(BNO055_OPR_MODE_ADDR, mode)
+        self.write_bytes(BNO055_OPR_MODE_ADDR, _modes[self.mode])
         sleep(15) # p.21 switching time
-
-    def _edit_reg(self, reg, val):
-        # bitwise OR with cur reg value
-        o_reg_val = self.write_read(reg,1)[0]
-        n_reg_val = o_reg_val | val
-        self.write_bytes(reg, n_reg_val)
 
     def _sum_and_sign(self, lsb, msb):
         res = ((lsb | (msb << 8)) & 0xFFFF)
@@ -345,44 +319,161 @@ ndof       NDOF         Yes       Yes        Yes        Yes
             res -= 65536
         return res
 
-    def _read_vector(self, lsb_x_addr, count = 3):
-        data = self.write_read(lsb_x_addr, count*2)
+    def _convert_in_lsb_msb(self, value):
+        if value < 0:
+            value += 65536
+        if value > 65535:
+            raise ValueError
+        lsb = value & 0x00FF
+        msb = (value >> 8) & 0x00FF
+        return lsb,msb
+
+    def _read_vector(self, lsb_addr, count = 3):
+        data = self.write_read(lsb_addr, count*2)
         res = [0]*count
         for i in range(count):
             res[i] = self._sum_and_sign(data[i*2], data[i*2+1])
         return res
 
-    def get_acc(self, axis = None):
+    def _write_vector(self, lsb_addr, data, count = 11):
+        rawdata = [0x00]*count*2
+        for i in range(count):
+            rawdata[i*2],rawdata[i*2+1] = self._convert_in_lsb_msb(data[i])
+        self.write_bytes(lsb_addr, rawdata)
+
+    def get_calibration_status(self):
+        """
+
+.. method:: get_calibration_status()
+
+        Retrieves the current calibration status of the BNO055 main components:
+
+        * System
+        * Accelerometer
+        * Gyroscope
+        * Magnetometer
+
+        .. note:: Read: 3 indicates fully calibrated; 0 indicates not calibrated.
+
+        Returns [sys_cal_sts, acc_cal_sts, gyro_cal_sts, magn_cal_sts]
+
+        """
+        sts = self.write_read(BNO055_CALIB_STAT_ADDR, 1)[0]
+        sys = (sts >> 6) & 0x03
+        acc = (sts >> 2) & 0x03
+        gyro = (sts >> 4) & 0x03
+        magn = sts & 0x03
+        return [sys, acc, gyro, magn]
+
+    def get_calibration(self, raw=False):
+        """
+
+.. method:: get_calibration(raw=False)
+
+        Retrieves the calibration values of the BMO055 main components (list of 11 elements):
+
+        * Accelerometer Offset for X, Y, Z axes (values in m/s²) - list elements 0,1,2;
+        * Magnetometer Offset for X, Y, Z axes (values in uT) - list elements 3,4,5;
+        * Gyroscope Offset for X, Y, Z axes (values in Dps) - list elements 6,7,8;
+        * Accelerometer Radius - list element 9;
+        * Magnetometer Radius - list element 10.
+
+        .. note:: If raw parameter is set to True, returns a list of 22 raw bytes. 
+
+        Returns [list of calibration values]
+
+        """
+        self.write_bytes(BNO055_OPR_MODE_ADDR, OPERATION_MODE_CONFIG)
+        sleep(25)
+        if raw:
+            cdata = self.write_read(ACCEL_OFFSET_X_LSB_ADDR, 22)
+        else:
+            cdata = self._read_vector(ACCEL_OFFSET_X_LSB_ADDR, 11)
+            cdata[0] = cdata[0]/100
+            cdata[1] = cdata[1]/100
+            cdata[2] = cdata[2]/100
+            cdata[3] = cdata[3]/16
+            cdata[4] = cdata[4]/16
+            cdata[5] = cdata[5]/16
+            cdata[6] = cdata[6]/900
+            cdata[7] = cdata[7]/900
+            cdata[8] = cdata[8]/900
+            cdata[9] = cdata[9]/1000
+            cdata[10] = cdata[10]/960
+        self.set_mode(self.mode)
+        return cdata
+
+    def set_calibration(self, data, raw=False):
+        """
+
+.. method:: set_calibration(data, raw=False)
+
+        Sets the calibration values of the BNO055 main components.
+        
+        :param data: List of values (11 elements) representing the sensors offsets and radius.
+ 
+        data list must follow this order:
+
+        * Accelerometer Offset for X, Y, Z axes (values in m/s²) - list elements 0,1,2;
+        * Magnetometer Offset for X, Y, Z axes (values in uT) - list elements 3,4,5;
+        * Gyroscope Offset for X, Y, Z axes (values in Dps) - list elements 6,7,8;
+        * Accelerometer Radius - list element 9;
+        * Magnetometer Radius - list element 10.  
+
+        .. note:: If raw parameter is set to True, following rules are required:
+
+                    * data list must have 22 elements;
+                    * each element must be a byte (value 0 to 255);
+                    * data list must be a sequence of [lsb1, msb1, lsb2, msb2, ..., ...];
+                    * data list order is the same described above (elem0 and elem1 of data list are respectively lsb and msb of accelerometer offset in x axis).
+
+        """
+        self.write_bytes(BNO055_OPR_MODE_ADDR, OPERATION_MODE_CONFIG)
+        sleep(25)
+        if raw:
+            if len(data) != 22:
+                raise ValueError
+            for elem in data:
+                if elem > 255:
+                    raise ValueError
+            self.write_bytes(ACCEL_OFFSET_X_LSB_ADDR, data)
+        else:
+            if len(data) != 11:
+                raise ValueError
+            data[0] = data[0]*100
+            data[1] = data[1]*100
+            data[2] = data[2]*100
+            data[3] = data[3]*16
+            data[4] = data[4]*16
+            data[5] = data[5]*16
+            data[6] = data[6]*900
+            data[7] = data[7]*900
+            data[8] = data[8]*900
+            data[9] = data[9]*1000
+            data[10] = data[10]*960
+            self._write_vector(ACCEL_OFFSET_X_LSB_ADDR, data)
+        self.set_mode(self.mode)
+
+    def get_acc(self):
         """
 
 .. method:: get_acc()
 
-        Retrieves the current absolute acceleration in single axis ("x", "y", or "z" as argument) as value in m/s² or in all three axis as a tuple of X, Y, Z values in m/s²
-
-        :param axis: Select the axis on which read the measure, default None
+        Retrieves the current absolute acceleration as a list of X, Y, Z values in m/s²
 
         Returns [acc_x, acc_y, acc_z]
 
         """
-        if axis in ("x", "X"):
-            bb = self._read_vector(BNO055_ACCEL_DATA_X_LSB_ADDR, 1)
-        elif axis in ("y", "Y"):
-            bb = self._read_vector(BNO055_ACCEL_DATA_Y_LSB_ADDR, 1)
-        elif axis in ("z", "Z"):
-            bb = self._read_vector(BNO055_ACCEL_DATA_Z_LSB_ADDR, 1)
-        else:
-            bb = self._read_vector(BNO055_ACCEL_DATA_X_LSB_ADDR)
-        res = [ i/100 for i in bb ]
-        if len(res) == 1:
-            return res[0]
-        return res
+        xx = self._read_vector(BNO055_ACCEL_DATA_X_LSB_ADDR)
+        xyz = [ i/100 for i in xx ]
+        return xyz
 
     def get_gyro(self):
         """
 
 .. method:: get_gyro()
 
-        Retrieves the current gyroscope data reading as a tuple of X, Y, Z, raw values 
+        Retrieves the current gyroscope data reading as a list of X, Y, Z values in degrees per second 
 
         Returns [gyro_x, gyro_y, gyro_z]
 
@@ -396,7 +487,7 @@ ndof       NDOF         Yes       Yes        Yes        Yes
 
 .. method:: get_magn()
 
-        Retrieves the current magnetometer reading as a tuple of X, Y, Z values
+        Retrieves the current magnetometer reading as a list of X, Y, Z values
         in micro-Teslas.
 
         Returns [value_magn_x, value_magn_y, value_magn_z]
@@ -411,7 +502,7 @@ ndof       NDOF         Yes       Yes        Yes        Yes
 
 .. method:: get_euler()
 
-        Retrieves the current orientation as a tuple of heading, roll,
+        Retrieves the current orientation as a list of heading, roll,
         and pitch euler angles in degrees.
 
         Returns [abs_or_h, abs_or_r, abs_or_p]
@@ -420,3 +511,63 @@ ndof       NDOF         Yes       Yes        Yes        Yes
         xx = self._read_vector(BNO055_EULER_H_LSB_ADDR)
         hrp = [ i/16 for i in xx ]
         return hrp
+
+    def get_lin_acc(self):
+        """
+
+.. method:: get_lin_acc()
+
+        Retrieves the current linear acceleration (acceleration from movement,
+        not from gravity) as a list of X, Y, Z values in m/s²
+
+        Returns [lin_acc_x, lin_acc_y, lin_acc_z]
+
+        """
+        xx = self._read_vector(BNO055_LINEAR_ACCEL_DATA_X_LSB_ADDR)
+        xyz = [ i/100 for i in xx ]
+        return xyz
+
+    def get_grav(self):
+        """
+
+.. method:: get_grav()
+
+        Retrieves the current gravity acceleration as a list of X, Y, Z values in m/s²
+
+        Returns [grav_x, grav_y, grav_z]
+
+        """
+        xx = self._read_vector(BNO055_GRAVITY_DATA_X_LSB_ADDR)
+        xyz = [ i/100 for i in xx ]
+        return xyz
+
+    def get_quaternion(self):
+        """
+
+.. method:: get_quaternion()
+
+        Retrieves the current orientation as a list of X, Y, Z, W quaternion
+        values.
+
+        Returns [w, x, y, z]
+
+        """
+        xx = self._read_vector(BNO055_QUATERNION_DATA_W_LSB_ADDR, 4)
+        wxyz = [ i*(1.0 / (1<<14)) for i in xx ]
+        return wxyz
+        
+    def get_temp(self):
+        """
+
+.. method:: get_quaternion()
+
+        Retrieves the current temperature in Celtius.
+
+        Returns temp
+
+        """
+        raw_t = self.write_read(BNO055_TEMP_ADDR, 1)[0]
+        if raw_t > 127:
+            return raw_t - 256
+        else:
+            return raw_t

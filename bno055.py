@@ -212,12 +212,11 @@ _modes = {
 class BNO055(i2c.I2C):
     """
 
-.. class:: BNO055(i2cdrv, addr=0x28, rst=None, clk=100000)
+.. class:: BNO055(i2cdrv, addr=0x28, clk=100000)
 
     Creates an intance of a new BNO055.
 
     :param i2cdrv: I2C Bus used '( I2C0, ... )'
-    :param rst: Reset pin (optional)
     :param addr: Slave address, default 0x28
     :param clk: Clock speed, default 100kHz
 
@@ -234,14 +233,10 @@ class BNO055(i2c.I2C):
 
     """
 
-    def __init__(self, i2cdrv, rst=None, addr=0x28, clk=100000):
+    def __init__(self, i2cdrv, addr=0x28, clk=100000):
         i2c.I2C.__init__(self,i2cdrv,addr,clk)
         self._addr = addr
-        self._rst = None
-        if rst:
-            self._rst = rst
-            pinMode(self._rst, OUTPUT_PUSHPULL)
-
+        
     def init(self, mode = None):
         """
 
@@ -253,20 +248,8 @@ class BNO055(i2c.I2C):
 
         """
 
-        self.write_bytes(BNO055_OPR_MODE_ADDR, OPERATION_MODE_CONFIG)
-        sleep(25)
-        # trigger reset HW/SW
-        if self._rst:
-            digitalWrite(self._rst, LOW)
-            sleep(10)
-            digitalWrite(self._rst, HIGH)
-        else:
-            self.write_bytes(BNO055_SYS_TRIGGER_ADDR, 0x20)
-        
-        sleep(650)    
         self.write_bytes(BNO055_PWR_MODE_ADDR, POWER_MODE_NORMAL)
-        sleep(10)
-        self.write_byte(BNO055_SYS_TRIGGER_ADDR, 0)
+        sleep(10) 
 
         self.write_bytes(BNO055_UNIT_SEL_ADDR, 0)
         if mode == None:
@@ -324,8 +307,8 @@ ndof       NDOF         Yes       Yes        Yes        Yes
             value += 65536
         if value > 65535:
             raise ValueError
-        lsb = value & 0x00FF
-        msb = (value >> 8) & 0x00FF
+        lsb = int(value) & 0x00FF
+        msb = (int(value) >> 8) & 0x00FF
         return lsb,msb
 
     def _read_vector(self, lsb_addr, count = 3):
@@ -339,7 +322,7 @@ ndof       NDOF         Yes       Yes        Yes        Yes
         rawdata = [0x00]*count*2
         for i in range(count):
             rawdata[i*2],rawdata[i*2+1] = self._convert_in_lsb_msb(data[i])
-        self.write_bytes(lsb_addr, rawdata)
+        self.write_bytes(lsb_addr, *rawdata)
 
     def get_calibration_status(self):
         """
@@ -436,7 +419,7 @@ ndof       NDOF         Yes       Yes        Yes        Yes
             for elem in data:
                 if elem > 255:
                     raise ValueError
-            self.write_bytes(ACCEL_OFFSET_X_LSB_ADDR, data)
+            self.write_bytes(ACCEL_OFFSET_X_LSB_ADDR, *data)
         else:
             if len(data) != 11:
                 raise ValueError

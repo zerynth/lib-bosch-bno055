@@ -542,7 +542,7 @@ ndof       NDOF         Yes       Yes        Yes        Yes
     def get_temp(self):
         """
 
-.. method:: get_quaternion()
+.. method:: get_temp()
 
         Retrieves the current temperature in Celtius.
 
